@@ -1,0 +1,11 @@
+node_modules/
+frontend/dist/
+.DS_Store
+.env.development
+.env.production
+.env.export
+*.log
+capture/captures/
+# Real data lives in the vault, never here. Only the synthetic dev copy is committed.
+data/*
+!data/dev/

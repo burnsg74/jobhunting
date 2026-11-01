@@ -1,0 +1,26 @@
+{
+  "name": "jobhunting-capture",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Wellfound capture. The API spawns this (POST /api/pulls); it also runs from a terminal while the API is up.",
+  "scripts": {
+    "capture:wellfound": "node --env-file-if-exists=../.env.production --import tsx scripts/wellfound-capture.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.126.0",
+    "playwright": "^1.55.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "tsx": "^4.20.6",
+    "typescript": "~5.9.2",
+    "vitest": "^5.0.1"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}

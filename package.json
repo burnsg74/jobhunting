@@ -1,0 +1,23 @@
+{
+  "name": "4002-jobhunting",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local job hunting app: Vite + Svelte 5 SPA, node:http API, CSV + markdown data",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "NODE_ENV=development node --env-file-if-exists=.env.development --watch backend/main.js",
+    "dev:web": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "start": "NODE_ENV=production node backend/main.js",
+    "test": "node --test \"frontend/src/lib/*.test.js\" \"backend/*.test.js\"",
+    "test:capture": "npm --prefix capture test",
+    "capture:wellfound": "npm --prefix capture run capture:wellfound",
+    "export:dev": "node --env-file-if-exists=.env.export scripts/export-from-postgres.mjs dev",
+    "export:prod": "node --env-file-if-exists=.env.export scripts/export-from-postgres.mjs prod",
+    "verify": "node scripts/verify.mjs"
+  },
+  "devDependencies": {
+    "pg": "^8.23.1"
+  }
+}
