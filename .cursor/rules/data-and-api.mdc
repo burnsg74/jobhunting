@@ -1,0 +1,39 @@
+---
+description: CSV store, event log, and API invariants
+globs: backend/**/*.js
+alwaysApply: false
+---
+
+# Data store and API
+
+`events.csv` is the history. `jobs.csv` only caches `status`, `status_at`, and `auto_deleted`. `recompute()` derives those from the latest status event. Do not assign them anywhere else except the first insert inside `ingestJob`.
+
+## Writes
+
+Every mutation goes through `mutate()` in `backend/store.js` (one queue). Reads load from disk each time so Dropbox and hand edits show up. Wrap new file IO in `withTimeout` (5s). Do not cache rows in the process.
+
+1. `tx.write` the markdown (`postings/{source_id}.md` or `events/{id}.md`) before the CSV row that points at it.
+2. Flush CSV with `writeAtomic` (temp file + rename).
+3. Deletes update the CSV first, then `tx.remove` the markdown.
+
+## Events
+
+- Status types and the status they set: `captured`/`restored` → `new`, then `saved`, `applied`, `deleted`, `interviewing`, `rejected`.
+- `offer`, `withdrew`, and `note` are the only types `updateEvent` may change. `captured` and `pull` are not in `MANUAL_EVENT_TYPES`.
+- Deleting a status event must `recompute` the job. That is Undo. Do not delete the job row.
+- Summaries from `autoSummary()` start with `Auto: `. `recompute` sets `auto_deleted` from that prefix.
+- Ids match `YYYYMMDD-HHMMSS-xxxx`. `compareEvents` orders `captured` before anything else at the same instant.
+- `ingestJob` is idempotent: an existing `source_id` returns `created: false` and is left untouched.
+
+## API
+
+Validate in `schema.js`. `server.js` maps `ValidationError` → 400, `NotFoundError` → 404, `ConflictError` → 409, `DataAccessError` → 503.
+
+```js
+// ❌ BAD — status written with no event
+job.status = "applied";
+
+// ✅ GOOD — one event, then the cache
+const event = pushEvent(state, tx, { job_id: id, type: "applied", body });
+recompute(state, job);
+```

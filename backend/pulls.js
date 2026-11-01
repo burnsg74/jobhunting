@@ -12,7 +12,7 @@ export function defaultCommand(config) {
   const cwd = path.join(config.repoRoot, "capture");
   return {
     cmd: process.execPath,
-    args: ["--import", "tsx", "scripts/wellfound-capture.ts"],
+    args: ["scripts/wellfound-capture.js"],
     cwd,
   };
 }

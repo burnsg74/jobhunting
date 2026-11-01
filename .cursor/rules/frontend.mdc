@@ -1,0 +1,26 @@
+---
+description: Svelte 5 SPA conventions for the job hunting UI
+globs: frontend/**/*.{svelte,js,css}
+alwaysApply: false
+---
+
+# Frontend
+
+Plain JavaScript and Svelte 5 runes. No TypeScript, no SvelteKit, no router library.
+
+- Call the backend only through `frontend/src/lib/api.js`. The browser never reads CSV or markdown.
+- Add routes in `matchRoute` (`router.svelte.js`) and the branch in `App.svelte`. Links are `<a href="/...">`; `router.handleClick` intercepts plain left-clicks. nginx already serves `index.html` for every path.
+- Module state lives in `app.svelte.js` (toasts, banner, pull) and `jobsCache.svelte.js`. Reload a page when `pull.finishedCount` changes.
+- Use `$state`, `$derived`, and `$effect`. Handlers are `onclick` / `onkeydown`, not `on:click`.
+- Style with component `<style>` and the tokens in `app.css` (`--accent`, `--good`, `--bad`, `--warn`). Keep 14px body text and 20px `h1`.
+- Inbox keys `S` `A` `D` `J` `K`, the arrows, and `Z` stay inactive while an input, textarea, select, or contenteditable is focused.
+- Failures go through `reportError`. A status change the user can reverse uses a toast `undo` that calls `api.deleteEvent`.
+- Pure filter, sort, and date logic goes in `frontend/src/lib/`.
+
+```svelte
+<!-- ❌ BAD -->
+<button on:click={save}>Save</button>
+
+<!-- ✅ GOOD -->
+<button onclick={save}>Save <kbd>S</kbd></button>
+```

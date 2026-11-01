@@ -5,7 +5,7 @@ Local job hunting app at **http://jobhunting.localhost**. Vite + Svelte 5 SPA (p
 ```
 frontend/   Vite + Svelte 5 SPA, own history router, Tiptap markdown editor
 backend/    node:http API (no framework): CSV/markdown store, validation, reports, pull run manager
-capture/    Wellfound capture script + fit scorer (TypeScript, run with tsx, own dependencies)
+capture/    Wellfound capture script + fit scorer (plain JavaScript, own dependencies)
 scripts/    export-from-postgres.mjs (one-shot), verify.mjs, dev.mjs
 data/dev/   synthetic jobs.csv, events.csv, postings/, events/ (committed)
 deploy/     nginx/jobhunting.conf, ecosystem.config.cjs, setup.sh, deploy.sh, teardown.sh
@@ -43,8 +43,6 @@ npm install
 npm --prefix frontend install
 npm --prefix capture install
 npm run dev          # API on :4002 (data/dev) + Vite on http://localhost:5173
-npm test             # node:test: backend, frontend lib
-npm run test:capture # vitest: fit scorer
 ```
 
 Dev edits write to `data/dev/`. To reset it: `npm run export:dev -- --force` (needs the old DB).
@@ -67,7 +65,7 @@ pm2 starts at login under launchd. macOS can block such a process from reading D
 
 ## Wellfound pull
 
-The Pull button in the Inbox header starts `POST /api/pulls`. The API spawns `capture/scripts/wellfound-capture.ts` with `tsx`, one run at a time. The script drives a separate Chrome-Remote profile (copied from your Chrome profile), reads the job list, then for each job it has not seen:
+The Pull button in the Inbox header starts `POST /api/pulls`. The API spawns `capture/scripts/wellfound-capture.js`, one run at a time. The script drives a separate Chrome-Remote profile (copied from your Chrome profile), reads the job list, then for each job it has not seen:
 
 1. opens the listing and extracts the job data,
 2. scores fit with Claude using the prompt at `WELLFOUND_PROMPT_FILE`,

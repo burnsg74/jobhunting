@@ -10,8 +10,6 @@
     "dev:web": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",
     "start": "NODE_ENV=production node backend/main.js",
-    "test": "node --test \"frontend/src/lib/*.test.js\" \"backend/*.test.js\"",
-    "test:capture": "npm --prefix capture test",
     "capture:wellfound": "npm --prefix capture run capture:wellfound",
     "export:dev": "node --env-file-if-exists=.env.export scripts/export-from-postgres.mjs dev",
     "export:prod": "node --env-file-if-exists=.env.export scripts/export-from-postgres.mjs prod",

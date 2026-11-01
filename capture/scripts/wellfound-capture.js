@@ -3,13 +3,10 @@ import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { chromium, type Browser, type Page, type Response } from 'playwright'
+import { chromium } from 'playwright'
 import {
   createJobFitScorerFromText,
   fitFrontmatterEntries,
-  type JobFitResult,
-  type JobFitScorer,
-  type FitErrorSlug,
 } from './jobFit.js'
 
 const JOBS_URL = 'https://wellfound.com/jobs'
@@ -54,50 +51,6 @@ const SKIP_PROFILE_NAMES = new Set([
   'LOCK',
 ])
 
-type CaptureRecord = {
-  id: number
-  url: string
-  method: string
-  resourceType: string
-  status: number
-  operationName: string | null
-  requestHeaders: Record<string, string>
-  responseHeaders: Record<string, string>
-  requestBody: unknown
-  responseBody: unknown
-  truncated: boolean
-  capturedAt: string
-}
-
-type JobLink = { href: string; jobId: string; slug: string; title: string }
-type ListingCard = { company: string; text: string; jobs: JobLink[] }
-type FitContext = { scorer: JobFitScorer | null; fallback: FitErrorSlug | null }
-
-type Tagged = { displayName?: string | null }
-type JobPerk = { title?: string | null; description?: string | null }
-type JobListing = {
-  id?: string | number
-  title?: string | null
-  slug?: string | null
-  compensation?: string | null
-  equity?: string | null
-  jobType?: string | null
-  remote?: boolean | null
-  skills?: Tagged[] | null
-  yearsExperienceMin?: number | null
-  liveStartAt?: number | string | null
-  description?: string | null
-  locationNames?: string[] | null
-  acceptedRemoteLocationNames?: string[] | null
-  startup?: {
-    name?: string | null
-    slug?: string | null
-    highConcept?: string | null
-    companySize?: string | null
-    perks?: JobPerk[] | null
-  } | null
-}
-
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const outDir = path.join(
   scriptDir,
@@ -109,35 +62,29 @@ const outDir = path.join(
 const networkDir = path.join(outDir, 'network')
 const jobsDir = path.join(outDir, 'jobs')
 
-const captures: CaptureRecord[] = []
-let writeChain: Promise<void> = Promise.resolve()
+const captures = []
+let writeChain = Promise.resolve()
 let nextId = 1
 
-function sleep(ms: number): Promise<void> {
+function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 // One JSON line per step on stdout for the API (backend/pulls.js). Everything else is plain log text.
-type StepEvent =
-  | { event: 'listing'; total: number; known: number }
-  | { event: 'skip'; index: number; total: number; id: string }
-  | { event: 'saved'; index: number; total: number; id: string; name: string; fit: string }
-  | { event: 'failed'; index: number; total: number; id: string; error: string }
-  | { event: 'done'; new: number; known: number; failed: number }
 
-function emit(step: StepEvent): void {
+function emit(step) {
   process.stdout.write(`${JSON.stringify(step)}\n`)
 }
 
-function sanitizeHeaders(headers: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {}
+function sanitizeHeaders(headers) {
+  const out = {}
   for (const [key, value] of Object.entries(headers)) {
     out[key] = SENSITIVE_HEADER.test(key) ? '[redacted]' : value
   }
   return out
 }
 
-function parseBody(raw: string | null): { value: unknown; truncated: boolean } {
+function parseBody(raw) {
   if (raw == null) return { value: null, truncated: false }
   let truncated = false
   let text = raw
@@ -152,16 +99,16 @@ function parseBody(raw: string | null): { value: unknown; truncated: boolean } {
   }
 }
 
-function graphqlOperationName(url: string, requestBody: unknown): string | null {
+function graphqlOperationName(url, requestBody) {
   if (requestBody && typeof requestBody === 'object' && !Array.isArray(requestBody)) {
-    const name = (requestBody as { operationName?: unknown }).operationName
+    const name = requestBody.operationName
     if (typeof name === 'string' && name) return name
   }
   if (Array.isArray(requestBody)) {
     const names = requestBody
       .map((item) =>
         item && typeof item === 'object' && 'operationName' in item
-          ? String((item as { operationName?: unknown }).operationName ?? '')
+          ? String(item.operationName ?? '')
           : '',
       )
       .filter(Boolean)
@@ -176,7 +123,7 @@ function graphqlOperationName(url: string, requestBody: unknown): string | null 
   return url.includes('graphql') ? 'graphql' : null
 }
 
-function isInteresting(response: Response): boolean {
+function isInteresting(response) {
   const type = response.request().resourceType()
   if (type !== 'xhr' && type !== 'fetch') return false
   const url = response.url()
@@ -185,23 +132,13 @@ function isInteresting(response: Response): boolean {
   return contentType.includes('json') || contentType.includes('graphql')
 }
 
-function slugFilename(name: string): string {
+function slugFilename(name) {
   return name.replaceAll(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 80) || 'capture'
 }
 
-type ChromeProfileInfo = { directory: string; name: string; user: string }
-
-function readLocalState(userDataDir: string): {
-  lastUsed: string
-  profiles: ChromeProfileInfo[]
-} {
+function readLocalState(userDataDir) {
   const localStatePath = path.join(userDataDir, 'Local State')
-  const raw = JSON.parse(fs.readFileSync(localStatePath, 'utf8')) as {
-    profile?: {
-      last_used?: string
-      info_cache?: Record<string, { name?: string; user_name?: string }>
-    }
-  }
+  const raw = JSON.parse(fs.readFileSync(localStatePath, 'utf8'))
   const cache = raw.profile?.info_cache ?? {}
   const profiles = Object.entries(cache).map(([directory, meta]) => ({
     directory,
@@ -211,7 +148,7 @@ function readLocalState(userDataDir: string): {
   return { lastUsed: raw.profile?.last_used ?? 'Default', profiles }
 }
 
-function resolveProfile(): ChromeProfileInfo {
+function resolveProfile() {
   const { lastUsed, profiles } = readLocalState(SRC_USER_DIR)
   const requested = process.env.WELLFOUND_CHROME_PROFILE ?? lastUsed
   const known = profiles.map((p) => `${p.directory} (${p.name}${p.user ? `, ${p.user}` : ''})`).join('; ')
@@ -223,7 +160,7 @@ function resolveProfile(): ChromeProfileInfo {
   return match
 }
 
-function copyDir(src: string, dest: string): void {
+function copyDir(src, dest) {
   fs.mkdirSync(dest, { recursive: true })
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
     if (SKIP_PROFILE_NAMES.has(entry.name) || entry.name.endsWith('.lock')) continue
@@ -238,7 +175,7 @@ function copyDir(src: string, dest: string): void {
   }
 }
 
-function backupSqlite(srcFile: string, destFile: string): void {
+function backupSqlite(srcFile, destFile) {
   if (!fs.existsSync(srcFile)) return
   fs.mkdirSync(path.dirname(destFile), { recursive: true })
   const destSql = destFile.replaceAll("'", "''")
@@ -254,7 +191,7 @@ function backupSqlite(srcFile: string, destFile: string): void {
   }
 }
 
-function cloneProfile(srcProfileDir: string, destProfileDir: string, srcUserDir: string, destUserDir: string): void {
+function cloneProfile(srcProfileDir, destProfileDir, srcUserDir, destUserDir) {
   console.log(`Copying ${path.basename(srcProfileDir)} into debug user data dir...`)
   copyDir(srcProfileDir, destProfileDir)
   for (const relative of ['Cookies', path.join('Network', 'Cookies')]) {
@@ -269,7 +206,7 @@ function cloneProfile(srcProfileDir: string, destProfileDir: string, srcUserDir:
   else fs.writeFileSync(destFirstRun, '')
 }
 
-async function portInUse(port: number): Promise<boolean> {
+async function portInUse(port) {
   return new Promise((resolve) => {
     const socket = net.connect({ host: '127.0.0.1', port }, () => {
       socket.end()
@@ -279,7 +216,7 @@ async function portInUse(port: number): Promise<boolean> {
   })
 }
 
-async function waitForCdp(port: number): Promise<void> {
+async function waitForCdp(port) {
   for (let i = 0; i < 40; i++) {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/json/version`)
@@ -292,7 +229,7 @@ async function waitForCdp(port: number): Promise<void> {
   throw new Error(`Chrome CDP did not become ready on port ${port}`)
 }
 
-function chromePids(): number[] {
+function chromePids() {
   try {
     // macOS pgrep treats argv starting with '-' as flags, so omit the '--' prefix.
     const out = execFileSync('pgrep', ['-f', `user-data-dir=${USER_DATA_DIR}`], {
@@ -308,7 +245,7 @@ function chromePids(): number[] {
   }
 }
 
-async function openChrome(): Promise<Browser> {
+async function openChrome() {
   if (!process.env.HOME) throw new Error('HOME is not set')
   await killChrome()
   if (await portInUse(CDP_PORT)) {
@@ -368,7 +305,7 @@ async function openChrome(): Promise<Browser> {
   }
 }
 
-async function killChrome(): Promise<void> {
+async function killChrome() {
   const pids = chromePids()
   for (const pid of pids) {
     try {
@@ -391,11 +328,11 @@ async function killChrome(): Promise<void> {
   await sleep(300)
 }
 
-function enqueueWrite(filePath: string, data: unknown): void {
+function enqueueWrite(filePath, data) {
   enqueueWriteText(filePath, JSON.stringify(data, null, 2))
 }
 
-function enqueueWriteText(filePath: string, text: string): void {
+function enqueueWriteText(filePath, text) {
   if (!SAVE_NETWORK) return
   writeChain = writeChain.then(async () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
@@ -403,23 +340,23 @@ function enqueueWriteText(filePath: string, text: string): void {
   })
 }
 
-function writeNetworkIndex(): void {
+function writeNetworkIndex() {
   enqueueWrite(
     path.join(networkDir, 'index.json'),
     captures.map(({ requestBody, responseBody, ...meta }) => meta),
   )
 }
 
-async function onResponse(response: Response): Promise<void> {
+async function onResponse(response) {
   if (!isInteresting(response)) return
   const request = response.request()
-  let requestRaw: string | null = null
+  let requestRaw = null
   try {
     requestRaw = request.postData()
   } catch {
     requestRaw = null
   }
-  let responseRaw: string | null = null
+  let responseRaw = null
   try {
     responseRaw = await response.text()
   } catch {
@@ -428,7 +365,7 @@ async function onResponse(response: Response): Promise<void> {
   const reqParsed = parseBody(requestRaw)
   const resParsed = parseBody(responseRaw)
   const operationName = graphqlOperationName(response.url(), reqParsed.value)
-  const record: CaptureRecord = {
+  const record = {
     id: nextId++,
     url: response.url(),
     method: request.method(),
@@ -448,7 +385,7 @@ async function onResponse(response: Response): Promise<void> {
   writeNetworkIndex()
 }
 
-function parseJobHref(href: string): { href: string; jobId: string; slug: string } | null {
+function parseJobHref(href) {
   let pathname = href
   try {
     pathname = new URL(href, JOBS_URL).pathname
@@ -460,14 +397,14 @@ function parseJobHref(href: string): { href: string; jobId: string; slug: string
   return { href: pathname, jobId: match[1], slug: match[2] }
 }
 
-function graphqlVariables(requestBody: unknown): Record<string, unknown> | null {
+function graphqlVariables(requestBody) {
   if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) return null
-  const variables = (requestBody as { variables?: unknown }).variables
+  const variables = requestBody.variables
   if (!variables || typeof variables !== 'object' || Array.isArray(variables)) return null
-  return variables as Record<string, unknown>
+  return variables
 }
 
-function requestJobId(requestBody: unknown): string | null {
+function requestJobId(requestBody) {
   const variables = graphqlVariables(requestBody)
   const id = variables?.id ?? variables?.jobListingId
   if (typeof id === 'string' && id) return id
@@ -475,18 +412,18 @@ function requestJobId(requestBody: unknown): string | null {
   return null
 }
 
-function asJobListing(value: unknown): JobListing | null {
+function asJobListing(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  return value as JobListing
+  return value
 }
 
-function extractJobListing(records: CaptureRecord[], jobId: string): JobListing | null {
+function extractJobListing(records, jobId) {
   for (const record of records) {
     if (record.operationName !== 'JobListingModalQuery') continue
     const requested = requestJobId(record.requestBody)
     const body = record.responseBody
     if (!body || typeof body !== 'object' || Array.isArray(body)) continue
-    const listing = asJobListing((body as { data?: { jobListing?: unknown } }).data?.jobListing)
+    const listing = asJobListing(body.data?.jobListing)
     if (!listing) continue
     const listingId = listing.id == null ? null : String(listing.id)
     if (requested === jobId || listingId === jobId) return listing
@@ -494,8 +431,8 @@ function extractJobListing(records: CaptureRecord[], jobId: string): JobListing 
   return null
 }
 
-async function api<T>(method: 'GET' | 'POST', pathname: string, body?: unknown): Promise<T> {
-  let res: globalThis.Response
+async function api(method, pathname, body) {
+  let res
   try {
     res = await fetch(`${API_URL}${pathname}`, {
       method,
@@ -507,21 +444,21 @@ async function api<T>(method: 'GET' | 'POST', pathname: string, body?: unknown):
       `Cannot reach the Job Hunting API at ${API_URL} (${err instanceof Error ? err.message : err}). Start it first.`,
     )
   }
-  const payload = (await res.json().catch(() => null)) as { error?: string } | null
+  const payload = await res.json().catch(() => null)
   if (!res.ok) throw new Error(payload?.error ?? `API ${method} ${pathname} failed (${res.status})`)
-  return payload as T
+  return payload
 }
 
-async function existingJobIds(): Promise<Set<string>> {
-  const { ids } = await api<{ ids: string[] }>('GET', '/api/jobs/ids')
+async function existingJobIds() {
+  const { ids } = await api('GET', '/api/jobs/ids')
   return new Set(ids)
 }
 
-function loadFitPromptText(): string {
+function loadFitPromptText() {
   if (!PROMPT_FILE) {
     throw new Error('WELLFOUND_PROMPT_FILE is not set (path to evaluate-job-fit.md in the vault)')
   }
-  let body: string
+  let body
   try {
     body = fs.readFileSync(PROMPT_FILE, 'utf8')
   } catch (err) {
@@ -531,20 +468,20 @@ function loadFitPromptText(): string {
   return body
 }
 
-function locationsOf(listing: JobListing): string {
+function locationsOf(listing) {
   const names = [...(listing.locationNames ?? []), ...(listing.acceptedRemoteLocationNames ?? [])]
   return [...new Set(names.filter(Boolean))].join(', ')
 }
 
 // POST /api/jobs is idempotent on source_id: returns false when the job was already known.
 async function postJob(
-  listing: JobListing,
-  href: string,
-  capturedAt: string,
-  evaluation: JobFitResult | null,
-  fallbackId: string,
-  fallbackSlug: string,
-): Promise<boolean> {
+  listing,
+  href,
+  capturedAt,
+  evaluation,
+  fallbackId,
+  fallbackSlug,
+) {
   const id = listing.id == null ? fallbackId : String(listing.id)
   const slug = listing.slug || fallbackSlug
   const title = listing.title || slug || 'Job'
@@ -553,7 +490,7 @@ async function postJob(
   const companySlug = listing.startup?.slug
   const companyUrl = companySlug ? `https://wellfound.com/company/${companySlug}` : ''
   const fit = Object.fromEntries(fitFrontmatterEntries(evaluation, capturedAt))
-  const { created } = await api<{ created: boolean }>('POST', '/api/jobs', {
+  const { created } = await api('POST', '/api/jobs', {
     source_id: id,
     source: 'Wellfound',
     name: title,
@@ -589,7 +526,7 @@ async function postJob(
   return created
 }
 
-function postedAtIso(value: unknown): string {
+function postedAtIso(value) {
   if (value == null || value === '') return ''
   if (typeof value === 'number' && Number.isFinite(value)) {
     const ms = value > 1e12 ? value : value * 1000
@@ -604,7 +541,7 @@ function postedAtIso(value: unknown): string {
   return ''
 }
 
-function yamlScalar(value: unknown): string {
+function yamlScalar(value) {
   if (value == null || value === '') return ''
   if (typeof value === 'boolean' || typeof value === 'number') return String(value)
   const text = String(value)
@@ -612,20 +549,20 @@ function yamlScalar(value: unknown): string {
   return text
 }
 
-function joinNames(values: unknown): string {
+function joinNames(values) {
   if (!Array.isArray(values)) return ''
   return values
-    .map((item) => (typeof item === 'string' ? item : (item as Tagged | null)?.displayName))
-    .filter((item): item is string => Boolean(item))
+    .map((item) => (typeof item === 'string' ? item : item?.displayName))
+    .filter((item) => Boolean(item))
     .join(', ')
 }
 
 function toMarkdown(
-  listing: JobListing,
-  href: string,
-  capturedAt: string,
-  evaluation: JobFitResult | null,
-): string {
+  listing,
+  href,
+  capturedAt,
+  evaluation,
+) {
   const id = listing.id == null ? '' : String(listing.id)
   const slug = listing.slug || ''
   const title = listing.title || slug || 'Job'
@@ -662,7 +599,7 @@ function toMarkdown(
   return lines.join('\n')
 }
 
-async function readListings(page: Page): Promise<{ cards: ListingCard[]; jobUrls: string[] }> {
+async function readListings(page) {
   return page.evaluate(({ selector, origin }) => {
     const jobHrefRe = /^\/jobs\/(\d+)-([^/?#]+)/
     const cards = [...document.querySelectorAll(selector)].map((card) => {
@@ -684,7 +621,7 @@ async function readListings(page: Page): Promise<{ cards: ListingCard[]; jobUrls
             title: (a.textContent ?? '').replace(/\s+/g, ' ').trim(),
           }
         })
-        .filter((job): job is NonNullable<typeof job> => job !== null)
+        .filter((job) => job !== null)
       const heading =
         card.querySelector('h2, h3, [data-test*="Startup"], a[href^="/company"]')?.textContent ?? ''
       return {
@@ -698,7 +635,7 @@ async function readListings(page: Page): Promise<{ cards: ListingCard[]; jobUrls
   }, { selector: STARTUP_RESULT, origin: JOBS_URL })
 }
 
-async function scrollUntilStable(page: Page): Promise<void> {
+async function scrollUntilStable(page) {
   await page.waitForSelector(STARTUP_RESULT, { timeout: 30_000 })
   let stable = 0
   let lastKey = ''
@@ -731,7 +668,7 @@ async function scrollUntilStable(page: Page): Promise<void> {
   console.warn(`Reached max scrolls (${MAX_SCROLLS})`)
 }
 
-async function closeJobDetail(page: Page): Promise<void> {
+async function closeJobDetail(page) {
   await page.keyboard.press('Escape')
   await sleep(400)
   if (!/\/jobs\/\d+-/.test(new URL(page.url()).pathname)) return
@@ -739,7 +676,7 @@ async function closeJobDetail(page: Page): Promise<void> {
   await page.waitForSelector(STARTUP_RESULT, { timeout: 15_000 }).catch(() => undefined)
 }
 
-async function evaluateFit(fit: FitContext, posting: string): Promise<JobFitResult | null> {
+async function evaluateFit(fit, posting) {
   if (!fit.scorer) {
     return fit.fallback ? { ok: false, error: fit.fallback, detail: 'scorer unavailable' } : null
   }
@@ -751,10 +688,10 @@ async function evaluateFit(fit: FitContext, posting: string): Promise<JobFitResu
 }
 
 async function captureJobDetails(
-  page: Page,
-  jobUrls: string[],
-  fit: FitContext,
-): Promise<{ skipped: number; written: number; failed: number; fitCounts: Record<string, number> }> {
+  page,
+  jobUrls,
+  fit,
+) {
   const knownIds = await existingJobIds()
   console.log(`Known jobs: ${knownIds.size}`)
   const limit = Math.min(jobUrls.length, MAX_JOBS)
@@ -763,7 +700,7 @@ async function captureJobDetails(
   let skipped = 0
   let written = 0
   let failed = 0
-  const fitCounts: Record<string, number> = {}
+  const fitCounts = {}
   for (let i = 0; i < limit; i++) {
     const parsed = parseJobHref(jobUrls[i])
     if (!parsed) continue
@@ -783,7 +720,7 @@ async function captureJobDetails(
         await page.goto(`https://wellfound.com${parsed.href}`, { waitUntil: 'domcontentloaded' })
       }
       const deadline = Date.now() + DETAIL_WAIT_MS
-      let listing: JobListing | null = null
+      let listing = null
       while (Date.now() < deadline) {
         listing = extractJobListing(captures.filter((c) => c.id >= startId), parsed.jobId)
         if (listing) break
@@ -852,7 +789,7 @@ async function captureJobDetails(
   return { skipped, written, failed, fitCounts }
 }
 
-async function jobsPage(browser: Browser): Promise<Page> {
+async function jobsPage(browser) {
   let context = browser.contexts()[0]
   for (let i = 0; i < 20 && !context; i++) {
     await sleep(250)
@@ -872,7 +809,7 @@ async function jobsPage(browser: Browser): Promise<Page> {
 
 // Resolved before Chrome launches so a broken prompt file fails the run immediately
 // rather than after a full scrape.
-async function resolveFitContext(): Promise<FitContext> {
+async function resolveFitContext() {
   if (process.env.WELLFOUND_SCORE_JOBS === '0') {
     console.log('Job fit scoring disabled (WELLFOUND_SCORE_JOBS=0)')
     return { scorer: null, fallback: null }
@@ -884,12 +821,12 @@ async function resolveFitContext(): Promise<FitContext> {
   return { scorer: createJobFitScorerFromText(loadFitPromptText()), fallback: null }
 }
 
-let activeBrowser: Browser | undefined
+let activeBrowser
 let cleanedUp = false
 
 // Closes Chrome and removes the temporary profile. Runs from `finally`, and from SIGTERM/SIGINT
 // when the API cancels a run or shuts down, so Chrome-Remote never outlives the script.
-async function cleanup(): Promise<void> {
+async function cleanup() {
   if (cleanedUp) return
   cleanedUp = true
   const browser = activeBrowser
@@ -912,14 +849,14 @@ async function cleanup(): Promise<void> {
   }
 }
 
-for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     console.warn(`${signal} received; closing Chrome`)
     void cleanup().finally(() => process.exit(signal === 'SIGTERM' ? 143 : 130))
   })
 }
 
-async function main(): Promise<void> {
+async function main() {
   // Fail fast, before launching Chrome, if the API is down.
   await existingJobIds()
   const fit = await resolveFitContext()
@@ -950,7 +887,7 @@ async function main(): Promise<void> {
   }
 }
 
-function pageOffSafe(browser: Browser | undefined): void {
+function pageOffSafe(browser) {
   if (!browser) return
   for (const context of browser.contexts()) {
     for (const page of context.pages()) {

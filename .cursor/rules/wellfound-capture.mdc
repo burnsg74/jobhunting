@@ -1,0 +1,28 @@
+---
+description: Wellfound capture script and fit-scoring contract
+globs: capture/**/*.js
+alwaysApply: false
+---
+
+# Wellfound capture
+
+`capture/` is its own package (plain JavaScript). The API spawns `scripts/wellfound-capture.js` and parses stdout. One run at a time. Cancel is `SIGTERM`, then `SIGKILL` after 20s (`backend/pulls.js`). Do not write `jobs.csv` from this package; `POST /api/jobs` instead.
+
+## stdout
+
+One JSON object per step. Any other line is a log line (the API keeps the last 12).
+
+- `{event:"listing", total}`
+- `{event:"skip", index, total, id}` — already ingested
+- `{event:"saved", index, total, id, name}`
+- `{event:"failed", index, total, id, error}`
+- `{event:"done", new, known, failed}`
+
+A scoring failure still saves the job, with `fit_error` set (`no_api_key` when `ANTHROPIC_API_KEY` is missing).
+
+## Fit scoring (`jobFit.js`)
+
+- The prompt stays in `WELLFOUND_PROMPT_FILE` in the vault. Do not copy it into the repo.
+- `jobFitSchema` is a strict Zod mirror of that prompt's output schema. Extra keys must fail so the single repair retry runs.
+- Model is `FIT_MODEL`. Request timeout is 120s.
+- An auto-delete becomes `auto_deleted: true` plus `auto_reason` on ingest. The store writes a `deleted` event whose summary is `Auto: …`.

@@ -93,61 +93,20 @@ export const jobFitSchema = z.strictObject({
   summary: z.string(),
 })
 
-export type JobFit = z.infer<typeof jobFitSchema>
-export type FitSkill = JobFit['skills'][number]
-export type Recommendation = 'STRONG_PASS' | 'PASS' | 'HOLD' | 'SKIP'
-export type DeleteReason =
-  | 'compensation'
-  | 'wrong_location'
-  | 'role_mismatch'
-  | 'missing_skills'
-  | 'seniority'
+const HARD_SCREEN_KEYS = ['remoteOnly', 'compensation', 'timezone', 'roleType']
 
-const HARD_SCREEN_KEYS = ['remoteOnly', 'compensation', 'timezone', 'roleType'] as const
-
-const HARD_SCREEN_LABELS: Record<(typeof HARD_SCREEN_KEYS)[number], string> = {
+const HARD_SCREEN_LABELS = {
   remoteOnly: 'Remote only',
   compensation: 'Compensation',
   timezone: 'Timezone',
   roleType: 'Role type',
 }
 
-export type FitComputation = {
-  requiredMatchPct: number
-  overallMatchPct: number
-  skills70Pass: boolean
-  primaryStackPass: boolean
-  hardScreenFail: boolean
-  score: number
-  recommendation: Recommendation
-  annualizedMax: number | null
-  hourlyEquivalent: number | null
-  missingRequiredSkills: string[]
-  deleteReason: DeleteReason | null
-  scoreBreakdown: string[]
-}
-
-export type FitPrompt = { system: string; userTemplate: string }
-
-export type FitErrorSlug = 'no_api_key' | 'parse_failed' | 'api_error'
-
-export type JobFitSuccess = {
-  ok: true
-  fit: JobFit
-  computed: FitComputation
-  model: string
-  evaluatedAt: string
-}
-
-export type JobFitFailure = { ok: false; error: FitErrorSlug; detail: string }
-
-export type JobFitResult = JobFitSuccess | JobFitFailure
-
 // ---------------------------------------------------------------------------
 // Prompt loading
 // ---------------------------------------------------------------------------
 
-export function parseFitPrompt(rawWithFrontmatter: string, label = 'fit prompt'): FitPrompt {
+export function parseFitPrompt(rawWithFrontmatter, label = 'fit prompt') {
   // The prompt lives in the vault as a note, so it starts with YAML frontmatter.
   const raw = rawWithFrontmatter.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, '')
   const heading = USER_TURN_HEADING.exec(raw)
@@ -168,8 +127,8 @@ export function parseFitPrompt(rawWithFrontmatter: string, label = 'fit prompt')
   return { system, userTemplate }
 }
 
-export function loadFitPrompt(file: string = PROMPT_FILE): FitPrompt {
-  let raw: string
+export function loadFitPrompt(file = PROMPT_FILE) {
+  let raw
   try {
     raw = fs.readFileSync(file, 'utf8')
   } catch (err) {
@@ -184,21 +143,21 @@ export function loadFitPrompt(file: string = PROMPT_FILE): FitPrompt {
 // Scoring math. The model emits judgments only; everything here is computed.
 // ---------------------------------------------------------------------------
 
-function normalizeName(value: string): string {
+function normalizeName(value) {
   return value.trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
-function statusWeight(status: FitSkill['status']): number {
+function statusWeight(status) {
   return status === 'HAVE' ? 1 : status === 'TOUCHED' ? 0.5 : 0
 }
 
-function matchPct(skills: FitSkill[]): number | null {
+function matchPct(skills) {
   if (skills.length === 0) return null
   const total = skills.reduce((sum, skill) => sum + statusWeight(skill.status), 0)
   return total / skills.length
 }
 
-function baseScore(requiredMatchPct: number): number {
+function baseScore(requiredMatchPct) {
   if (requiredMatchPct >= 0.9) return 9
   if (requiredMatchPct >= 0.8) return 8
   if (requiredMatchPct >= 0.7) return 7
@@ -207,9 +166,9 @@ function baseScore(requiredMatchPct: number): number {
 }
 
 export function annualize(
-  salaryMax: number | null,
-  salaryPeriod: JobFit['compensation']['salaryPeriod'],
-): number | null {
+  salaryMax,
+  salaryPeriod,
+) {
   if (salaryMax == null || salaryPeriod == null) return null
   if (salaryPeriod === 'hour') return salaryMax * HOURS_PER_YEAR
   if (salaryPeriod === 'month') return salaryMax * MONTHS_PER_YEAR
@@ -217,11 +176,11 @@ export function annualize(
 }
 
 function deleteReasonFor(
-  fit: JobFit,
-  skills70Pass: boolean,
-  primaryStackPass: boolean,
-  missingRequiredSkills: string[],
-): DeleteReason {
+  fit,
+  skills70Pass,
+  primaryStackPass,
+  missingRequiredSkills,
+) {
   if (fit.hardScreen.remoteOnly.result === 'fail') return 'wrong_location'
   if (fit.hardScreen.compensation.result === 'fail') return 'compensation'
   if (fit.hardScreen.roleType.result === 'fail') return 'role_mismatch'
@@ -234,7 +193,7 @@ function deleteReasonFor(
   return 'role_mismatch'
 }
 
-export function computeFit(fit: JobFit): FitComputation {
+export function computeFit(fit) {
   const nonSoft = fit.skills.filter((skill) => !skill.soft)
   const requiredNonSoft = nonSoft.filter((skill) => skill.requirement === 'required')
 
@@ -261,8 +220,8 @@ export function computeFit(fit: JobFit): FitComputation {
     .filter((skill) => skill.status === 'DONT_HAVE')
     .map((skill) => skill.name)
 
-  const scoreBreakdown: string[] = []
-  let score: number
+  const scoreBreakdown = []
+  let score
 
   if (hardScreenFail) {
     if (hardFail) {
@@ -309,7 +268,7 @@ export function computeFit(fit: JobFit): FitComputation {
   }
 
   const anyUnclear = HARD_SCREEN_KEYS.some((key) => fit.hardScreen[key].result === 'unclear')
-  let recommendation: Recommendation
+  let recommendation
   if (hardScreenFail) {
     recommendation = 'SKIP'
   } else if (score >= 9 && !anyUnclear) {
@@ -346,9 +305,9 @@ export function computeFit(fit: JobFit): FitComputation {
 // ---------------------------------------------------------------------------
 
 export function fitFrontmatterEntries(
-  result: JobFitResult | null,
-  now: string = new Date().toISOString(),
-): Array<[string, string]> {
+  result,
+  now = new Date().toISOString(),
+) {
   if (result == null) {
     return [['status', 'new']]
   }
@@ -361,7 +320,7 @@ export function fitFrontmatterEntries(
   }
 
   const { fit, computed } = result
-  const entries: Array<[string, string]> = []
+  const entries = []
 
   if (computed.recommendation === 'SKIP' && computed.deleteReason) {
     entries.push(
@@ -402,31 +361,31 @@ export function fitFrontmatterEntries(
 // Markdown report
 // ---------------------------------------------------------------------------
 
-function skillNames(skills: FitSkill[], status: FitSkill['status']): string {
+function skillNames(skills, status) {
   return skills.filter((skill) => skill.status === status).map((skill) => skill.name).join(', ')
 }
 
-function formatPct(value: number): string {
+function formatPct(value) {
   return `${Math.round(value * 100)}%`
 }
 
-function formatUsd(value: number): string {
+function formatUsd(value) {
   return `$${Math.round(value).toLocaleString('en-US')}`
 }
 
-function quote(evidence: string): string {
+function quote(evidence) {
   const text = evidence.replace(/\s+/g, ' ').trim()
   if (!text || text === 'Not disclosed') return 'Not disclosed'
   const clipped = text.length > EVIDENCE_LIMIT ? `${text.slice(0, EVIDENCE_LIMIT)}...` : text
   return `"${clipped}"`
 }
 
-function cell(value: string | null): string {
+function cell(value) {
   if (!value) return ''
   return value.replace(/\s+/g, ' ').replace(/\|/g, '\\|').trim()
 }
 
-function salaryRange(compensation: JobFit['compensation']): string {
+function salaryRange(compensation) {
   const { salaryMin, salaryMax, salaryPeriod, currency } = compensation
   if (salaryMin == null && salaryMax == null) return 'Not disclosed'
   const period = salaryPeriod ? `/${salaryPeriod}` : ''
@@ -437,7 +396,7 @@ function salaryRange(compensation: JobFit['compensation']): string {
   return `${range} ${currency}${period}`
 }
 
-function formatRecommendation(recommendation: Recommendation): string {
+function formatRecommendation(recommendation) {
   switch (recommendation) {
     case 'STRONG_PASS':
       return 'Strong pass'
@@ -450,7 +409,7 @@ function formatRecommendation(recommendation: Recommendation): string {
   }
 }
 
-export function renderFitReport(result: JobFitSuccess): string[] {
+export function renderFitReport(result) {
   const { fit, computed } = result
   const lines = [
     '## Fit Evaluation',
@@ -551,15 +510,15 @@ export function renderFitReport(result: JobFitSuccess): string[] {
 // Model call
 // ---------------------------------------------------------------------------
 
-function responseText(message: Anthropic.Message): string {
+function responseText(message) {
   return message.content
-    .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+    .filter((block) => block.type === 'text')
     .map((block) => block.text)
     .join('')
 }
 
-function parseFit(raw: string): { ok: true; fit: JobFit } | { ok: false; detail: string } {
-  let json: unknown
+function parseFit(raw) {
+  let json
   try {
     json = JSON.parse(raw)
   } catch (err) {
@@ -576,29 +535,27 @@ function parseFit(raw: string): { ok: true; fit: JobFit } | { ok: false; detail:
   return { ok: true, fit: parsed.data }
 }
 
-export type JobFitScorer = { evaluate(posting: string): Promise<JobFitResult> }
-
-export function createJobFitScorer(promptFile?: string): JobFitScorer {
+export function createJobFitScorer(promptFile) {
   return scorerFromPrompt(loadFitPrompt(promptFile))
 }
 
-export function createJobFitScorerFromText(raw: string): JobFitScorer {
+export function createJobFitScorerFromText(raw) {
   return scorerFromPrompt(parseFitPrompt(raw, 'prompt file'))
 }
 
-function scorerFromPrompt(prompt: FitPrompt): JobFitScorer {
+function scorerFromPrompt(prompt) {
   const client = new Anthropic({ maxRetries: 3, timeout: REQUEST_TIMEOUT_MS })
 
   return {
-    async evaluate(posting: string): Promise<JobFitResult> {
-      const messages: Anthropic.MessageParam[] = [
+    async evaluate(posting) {
+      const messages = [
         { role: 'user', content: prompt.userTemplate.replace(POSTING_PLACEHOLDER, posting) },
         { role: 'assistant', content: PREFILL },
       ]
 
       let lastDetail = 'unknown error'
       for (let attempt = 1; attempt <= 2; attempt++) {
-        let message: Anthropic.Message
+        let message
         try {
           message = await client.messages.create({
             model: FIT_MODEL,

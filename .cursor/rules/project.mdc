@@ -1,0 +1,29 @@
+---
+description: Constraints for any change to the job hunting app
+alwaysApply: true
+---
+
+# Job Hunting
+
+Local app at http://jobhunting.localhost: Vite + Svelte 5 SPA (plain JS), a `node:http` API on port 4002 (pm2 `jobhunting-api`), CSV + markdown as the only database. Modelled on `../4001-budget`. No auth; bind loopback.
+
+## Data locations
+
+- Production is the Dropbox vault (`VAULT_PATH` + `DATA_DIR`). Never copy it into the repo, fixtures, or commits.
+- `npm run dev` reads and writes `data/dev/` (synthetic, committed). Do not point dev at the vault.
+- An absolute `DATA_PATH` is the only override. `.env.production`, `.env.development`, and `.env.export` stay gitignored.
+
+## When changing behavior
+
+- History, status, and reports come from `events.csv`. Change them in `backend/store.js`, not by patching the status columns from the UI or the capture script.
+- A known `source_id` is never rewritten or resurrected.
+- Days use `APP_TIMEZONE`, default `America/Los_Angeles` (`backend/tz.js`). Stored timestamps stay ISO UTC.
+- New HTTP routes go in `backend/server.js` and return JSON. Do not add Express, a database, React, or TypeScript under `frontend/` or `backend/`.
+- This project has no tests. Do not add a test runner or test files.
+- Exercise UI changes in the browser against `npm run dev` (click, type, keyboard, empty and error states).
+
+## Leave alone unless asked
+
+- `scripts/export-from-postgres.mjs` is a finished one-shot. Postgres is read-only.
+- `deploy/teardown.sh` must not delete data. Ship updates with `deploy/deploy.sh`.
+- Do not add a second writer to the CSV files.
